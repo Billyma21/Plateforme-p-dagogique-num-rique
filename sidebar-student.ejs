@@ -1,0 +1,12 @@
+<%- include('partials/head', {title: 'Erreur'}) %>
+<body>
+<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg)">
+  <div style="text-align:center;padding:40px">
+    <div style="font-size:5rem">⚠️</div>
+    <h1>Une erreur est survenue</h1>
+    <p style="color:var(--muted);margin:16px 0"><%= typeof message !== 'undefined' ? message : 'Erreur interne du serveur' %></p>
+    <a href="/" class="btn btn-primary">🏠 Retour à l'accueil</a>
+  </div>
+</div>
+</body>
+</html>

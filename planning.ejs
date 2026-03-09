@@ -1,0 +1,89 @@
+const express = require('express');
+const router = express.Router();
+const bcrypt = require('bcryptjs');
+const pool = require('../config/database');
+
+// GET /login
+router.get('/login', (req, res) => {
+  if (req.session.userId) {
+    return res.redirect(getDashboardRoute(req.session.role));
+  }
+  res.render('auth/login', { error: null, success: req.query.registered });
+});
+
+// POST /login
+router.post('/login', async (req, res) => {
+  const { username, password } = req.body;
+  try {
+    const result = await pool.query(
+      `SELECT * FROM users WHERE username = $1 AND is_active = true`, [username]
+    );
+    if (result.rows.length === 0) {
+      return res.render('auth/login', { error: 'Identifiant ou mot de passe incorrect', success: null });
+    }
+    const user = result.rows[0];
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) {
+      return res.render('auth/login', { error: 'Identifiant ou mot de passe incorrect', success: null });
+    }
+    req.session.userId = user.id;
+    req.session.role = user.role;
+    req.session.username = user.username;
+    req.session.firstName = user.first_name;
+    res.redirect(getDashboardRoute(user.role));
+  } catch (err) {
+    console.error(err);
+    res.render('auth/login', { error: 'Erreur serveur. Réessayez.', success: null });
+  }
+});
+
+// GET /register
+router.get('/register', (req, res) => {
+  res.render('auth/register', { error: null });
+});
+
+// POST /register
+router.post('/register', async (req, res) => {
+  const { first_name, last_name, date_of_birth, gender, location, password, confirm_password } = req.body;
+  if (password !== confirm_password) {
+    return res.render('auth/register', { error: 'Les mots de passe ne correspondent pas.' });
+  }
+  if (password.length < 6) {
+    return res.render('auth/register', { error: 'Le mot de passe doit contenir au moins 6 caractères.' });
+  }
+  const validLocations = ['Annessens', 'Querelle', 'Louise', 'Kruisberg', 'Willems', 'Modele', 'Haren'];
+  if (!validLocations.includes(location)) {
+    return res.render('auth/register', { error: 'Lieu invalide.' });
+  }
+  try {
+    const username = (first_name.toLowerCase() + '.' + last_name.toLowerCase()).replace(/\s+/g, '');
+    const existing = await pool.query(`SELECT id FROM users WHERE username = $1`, [username]);
+    if (existing.rows.length > 0) {
+      return res.render('auth/register', { error: 'Un compte avec ce nom existe déjà. Contactez votre formateur.' });
+    }
+    const hash = await bcrypt.hash(password, 12);
+    const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8'];
+    const color = colors[Math.floor(Math.random() * colors.length)];
+    await pool.query(`
+      INSERT INTO users (role, username, password_hash, first_name, last_name, date_of_birth, gender, location, avatar_color)
+      VALUES ('student', $1, $2, $3, $4, $5, $6, $7, $8)
+    `, [username, hash, first_name, last_name, date_of_birth, gender, location, color]);
+    res.redirect('/login?registered=1');
+  } catch (err) {
+    console.error(err);
+    res.render('auth/register', { error: 'Erreur lors de l\'inscription. Réessayez.' });
+  }
+});
+
+// GET /logout
+router.get('/logout', (req, res) => {
+  req.session.destroy(() => res.redirect('/'));
+});
+
+function getDashboardRoute(role) {
+  if (role === 'admin') return '/admin';
+  if (role === 'trainer') return '/trainer';
+  return '/student';
+}
+
+module.exports = router;

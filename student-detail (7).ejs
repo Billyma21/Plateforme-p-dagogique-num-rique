@@ -1,0 +1,38 @@
+<%- include('../partials/head', {title: 'Planning'}) %>
+<body>
+<div class="app-wrapper">
+  <%- include('../partials/sidebar-student', {activePage: 'planning', user, unreadMessages: 0}) %>
+  <div class="main-content">
+    <div class="topbar">
+      <div class="topbar-title">
+        <h1>📅 Planning des cours</h1>
+        <p>Consultez le planning de vos sessions</p>
+      </div>
+    </div>
+    <div class="page-content">
+      <% if (pdfs.length === 0) { %>
+      <div style="text-align:center;padding:60px;color:var(--muted)">
+        <div style="font-size:4rem">📅</div>
+        <h2>Aucun planning disponible</h2>
+        <p>Votre formateur n'a pas encore publié de planning.</p>
+      </div>
+      <% } else { %>
+      <div class="grid-3">
+        <% pdfs.forEach(pdf => { %>
+        <div class="card">
+          <div style="font-size:2.5rem;margin-bottom:12px">📄</div>
+          <h3><%= pdf.title %></h3>
+          <p style="color:var(--muted);font-size:0.85rem;margin:8px 0">Publié le <%= new Date(pdf.created_at).toLocaleDateString('fr-BE') %></p>
+          <a href="<%= pdf.file_path %>" target="_blank" class="btn btn-navy btn-sm">
+            👁️ Voir le PDF
+          </a>
+        </div>
+        <% }) %>
+      </div>
+      <% } %>
+    </div>
+  </div>
+</div>
+<%- include('../partials/scripts') %>
+</body>
+</html>

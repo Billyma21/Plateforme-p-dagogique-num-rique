@@ -1,0 +1,84 @@
+<%- include('../partials/head', {title: 'Messages'}) %>
+<body>
+<div class="app-wrapper">
+  <%- include('../partials/sidebar-trainer', {activePage: 'messages', user, unreadMessages: 0}) %>
+  <div class="main-content">
+    <div class="topbar">
+      <div class="topbar-title"><h1>💬 Messages</h1></div>
+      <button onclick="document.getElementById('composeBox').style.display='block'" class="btn btn-primary">✉️ Nouveau message</button>
+    </div>
+    <div class="page-content">
+      <div id="composeBox" style="display:none" class="card" style="margin-bottom:24px">
+        <h3 style="margin-bottom:20px">✉️ Nouveau message</h3>
+        <div class="form-group">
+          <label class="form-label">Destinataire</label>
+          <select id="recipient" class="form-control">
+            <option value="">-- Choisir --</option>
+            <% users.forEach(u => { %>
+            <option value="<%= u.id %>"><%= u.first_name %> (<%= u.role %>)</option>
+            <% }) %>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Objet</label>
+          <input type="text" id="subject" class="form-control" placeholder="Objet">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Message</label>
+          <textarea id="msgBody" class="form-control" rows="5"></textarea>
+        </div>
+        <div style="display:flex;gap:12px">
+          <button onclick="sendMsg()" class="btn btn-primary">📨 Envoyer</button>
+          <button onclick="document.getElementById('composeBox').style.display='none'" class="btn btn-outline">Annuler</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-bottom:20px">📥 Messages reçus (<%= inbox.length %>)</h3>
+        <% if (inbox.length === 0) { %><div style="text-align:center;padding:40px;color:var(--muted)"><div style="font-size:3rem">📭</div><p>Aucun message</p></div>
+        <% } else { %>
+        <% inbox.forEach(m => { %>
+        <div class="message-item <%= !m.is_read ? 'unread' : '' %>" onclick="showMsg(this)" data-body="<%= m.body.replace(/"/g,'&quot;') %>" data-subject="<%= m.subject %>" data-from="<%= m.sender_name %>">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+            <div class="avatar avatar-sm" style="background:<%= m.avatar_color || 'var(--coral)' %>"><%= m.sender_name ? m.sender_name.charAt(0) : '?' %></div>
+            <strong><%= m.sender_name %></strong>
+            <span class="badge-pill badge-info" style="font-size:0.7rem"><%= m.sender_role %></span>
+            <% if (!m.is_read) { %><span class="notif-dot"></span><% } %>
+            <span style="margin-left:auto;font-size:0.75rem;color:var(--muted)"><%= new Date(m.created_at).toLocaleDateString('fr-BE') %></span>
+          </div>
+          <div style="font-weight:600"><%= m.subject || 'Sans objet' %></div>
+          <div style="color:var(--muted);font-size:0.85rem"><%= m.body.substring(0,80) %>...</div>
+        </div>
+        <% }) %>
+        <% } %>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="msgModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:999;align-items:center;justify-content:center;padding:20px">
+  <div style="background:white;border-radius:20px;padding:32px;max-width:500px;width:100%">
+    <h3 id="modalSubject"></h3>
+    <p id="modalFrom" style="color:var(--muted);margin:8px 0 16px;font-size:0.85rem"></p>
+    <div id="modalBody" style="background:var(--bg);padding:16px;border-radius:10px;line-height:1.7"></div>
+    <button onclick="document.getElementById('msgModal').style.display='none'" class="btn btn-navy" style="margin-top:20px;width:100%">Fermer</button>
+  </div>
+</div>
+<%- include('../partials/scripts') %>
+<script>
+async function sendMsg() {
+  const recipient_id = document.getElementById('recipient').value;
+  const subject = document.getElementById('subject').value;
+  const body = document.getElementById('msgBody').value;
+  if (!recipient_id || !body) return alert('Remplissez les champs requis.');
+  const r = await fetch('/trainer/messages/send', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({recipient_id, subject, body}) });
+  if (r.ok) { alert('Envoyé !'); location.reload(); }
+}
+function showMsg(el) {
+  document.getElementById('modalSubject').textContent = el.dataset.subject || 'Sans objet';
+  document.getElementById('modalFrom').textContent = 'De : ' + el.dataset.from;
+  document.getElementById('modalBody').textContent = el.dataset.body;
+  document.getElementById('msgModal').style.display = 'flex';
+}
+</script>
+</body>
+</html>

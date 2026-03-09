@@ -1,0 +1,125 @@
+const express = require('express');
+const router = express.Router();
+const pool = require('../config/database');
+const { requireAdmin } = require('../middleware/auth');
+const upload = require('../middleware/upload');
+const path = require('path');
+
+// Admin dashboard
+router.get('/', requireAdmin, async (req, res) => {
+  try {
+    const [students, modules, recentActivity, messageCount] = await Promise.all([
+      pool.query(`SELECT COUNT(*) FROM users WHERE role = 'student' AND is_active = true`),
+      pool.query(`SELECT m.*, COUNT(DISTINCT c.id) as course_count FROM modules m LEFT JOIN courses c ON c.module_id = m.id GROUP BY m.id ORDER BY m.order_index`),
+      pool.query(`SELECT u.first_name, u.last_name, u.location, er.completed_at, e.title, er.points_earned FROM exercise_results er JOIN users u ON er.student_id = u.id JOIN exercises e ON er.exercise_id = e.id ORDER BY er.completed_at DESC LIMIT 10`),
+      pool.query(`SELECT COUNT(*) FROM messages WHERE is_read = false`),
+    ]);
+    const byLocation = await pool.query(`SELECT location, COUNT(*) as count FROM users WHERE role = 'student' AND is_active = true GROUP BY location ORDER BY count DESC`);
+    const topStudents = await pool.query(`SELECT first_name, last_name, total_points, location, level_id FROM users WHERE role = 'student' ORDER BY total_points DESC LIMIT 10`);
+    res.render('admin/dashboard', {
+      studentCount: parseInt(students.rows[0].count),
+      modules: modules.rows,
+      recentActivity: recentActivity.rows,
+      messageCount: parseInt(messageCount.rows[0].count),
+      byLocation: byLocation.rows,
+      topStudents: topStudents.rows,
+      user: { firstName: 'Admin' }
+    });
+  } catch (err) {
+    console.error(err);
+    res.render('admin/dashboard', { studentCount: 0, modules: [], recentActivity: [], messageCount: 0, byLocation: [], topStudents: [], user: { firstName: 'Admin' } });
+  }
+});
+
+// Students list
+router.get('/students', requireAdmin, async (req, res) => {
+  const { location, search } = req.query;
+  try {
+    let query = `SELECT u.*, l.name as level_name, l.badge_icon,
+      (SELECT COUNT(*) FROM exercise_results er WHERE er.student_id = u.id) as exercises_done,
+      (SELECT COUNT(*) FROM messages m WHERE m.recipient_id = u.id AND m.is_read = false) as unread_messages
+      FROM users u LEFT JOIN levels l ON u.level_id = l.id WHERE u.role = 'student'`;
+    const params = [];
+    if (location) { params.push(location); query += ` AND u.location = $${params.length}`; }
+    if (search) { params.push(`%${search}%`); query += ` AND (u.first_name ILIKE $${params.length} OR u.last_name ILIKE $${params.length})`; }
+    query += ` ORDER BY u.location, u.last_name`;
+    const students = await pool.query(query, params);
+    const locations = ['Annessens', 'Querelle', 'Louise', 'Kruisberg', 'Willems', 'Modele', 'Haren'];
+    res.render('admin/students', { students: students.rows, locations, selectedLocation: location, search: search || '', user: { firstName: 'Admin' } });
+  } catch (err) {
+    console.error(err);
+    res.redirect('/admin');
+  }
+});
+
+// Student detail
+router.get('/students/:id', requireAdmin, async (req, res) => {
+  try {
+    const student = await pool.query(`SELECT u.*, l.name as level_name, l.badge_icon, l.color as level_color FROM users u LEFT JOIN levels l ON u.level_id = l.id WHERE u.id = $1`, [req.params.id]);
+    if (!student.rows.length) return res.redirect('/admin/students');
+    const progress = await pool.query(`SELECT cp.*, c.name, c.total_points, m.name as module_name, m.color FROM course_progress cp JOIN courses c ON cp.course_id = c.id JOIN modules m ON c.module_id = m.id WHERE cp.student_id = $1 ORDER BY cp.started_at`, [req.params.id]);
+    const results = await pool.query(`SELECT er.*, e.title, e.type, e.points, c.name as course_name FROM exercise_results er JOIN exercises e ON er.exercise_id = e.id JOIN courses c ON e.course_id = c.id WHERE er.student_id = $1 ORDER BY er.completed_at DESC`, [req.params.id]);
+    const badges = await pool.query(`SELECT b.*, sb.earned_at FROM student_badges sb JOIN badges b ON sb.badge_id = b.id WHERE sb.student_id = $1`, [req.params.id]);
+    res.render('admin/student-detail', { student: student.rows[0], progress: progress.rows, results: results.rows, badges: badges.rows, user: { firstName: 'Admin' } });
+  } catch (err) {
+    console.error(err);
+    res.redirect('/admin/students');
+  }
+});
+
+// PDF management
+router.get('/files', requireAdmin, async (req, res) => {
+  try {
+    const plannings = await pool.query(`SELECT pf.*, u.first_name FROM pdf_files pf LEFT JOIN users u ON pf.uploaded_by = u.id WHERE pf.type = 'planning' ORDER BY pf.created_at DESC`);
+    const courses = await pool.query(`SELECT pf.*, u.first_name, c.name as course_name FROM pdf_files pf LEFT JOIN users u ON pf.uploaded_by = u.id LEFT JOIN courses c ON pf.course_id = c.id WHERE pf.type IN ('course','practice') ORDER BY pf.created_at DESC`);
+    const courseList = await pool.query(`SELECT id, name FROM courses ORDER BY id`);
+    res.render('admin/files', { plannings: plannings.rows, courseFiles: courses.rows, courseList: courseList.rows, user: { firstName: 'Admin' } });
+  } catch (err) {
+    res.redirect('/admin');
+  }
+});
+
+router.post('/files/upload', requireAdmin, upload.single('pdf'), async (req, res) => {
+  if (!req.file) return res.redirect('/admin/files');
+  const { title, type, course_id } = req.body;
+  const filePath = `/uploads/${type}/${req.file.filename}`;
+  try {
+    await pool.query(`INSERT INTO pdf_files (title, type, course_id, file_path, uploaded_by) VALUES ($1,$2,$3,$4,$5)`,
+      [title, type, course_id || null, filePath, req.session.userId]);
+    res.redirect('/admin/files');
+  } catch (err) {
+    console.error(err);
+    res.redirect('/admin/files');
+  }
+});
+
+router.post('/files/:id/delete', requireAdmin, async (req, res) => {
+  await pool.query(`UPDATE pdf_files SET is_active = false WHERE id = $1`, [req.params.id]);
+  res.redirect('/admin/files');
+});
+
+// Messages
+router.get('/messages', requireAdmin, async (req, res) => {
+  try {
+    const inbox = await pool.query(`SELECT m.*, u.first_name as sender_name, u.role as sender_role FROM messages m JOIN users u ON m.sender_id = u.id WHERE m.recipient_id = $1 ORDER BY m.created_at DESC`, [req.session.userId]);
+    const users = await pool.query(`SELECT id, first_name, last_name, role FROM users WHERE is_active = true AND id != $1 ORDER BY role, first_name`, [req.session.userId]);
+    await pool.query(`UPDATE messages SET is_read = true WHERE recipient_id = $1`, [req.session.userId]);
+    res.render('admin/messages', { inbox: inbox.rows, users: users.rows, user: { firstName: 'Admin' } });
+  } catch (err) {
+    res.redirect('/admin');
+  }
+});
+
+router.post('/messages/send', requireAdmin, async (req, res) => {
+  const { recipient_id, subject, body } = req.body;
+  await pool.query(`INSERT INTO messages (sender_id, recipient_id, subject, body) VALUES ($1,$2,$3,$4)`, [req.session.userId, recipient_id, subject, body]);
+  res.json({ success: true });
+});
+
+// Delete student
+router.post('/students/:id/delete', requireAdmin, async (req, res) => {
+  await pool.query(`UPDATE users SET is_active = false WHERE id = $1 AND role = 'student'`, [req.params.id]);
+  res.redirect('/admin/students');
+});
+
+module.exports = router;

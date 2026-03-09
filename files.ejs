@@ -1,0 +1,138 @@
+<%- include('../partials/head', {title: 'Mon Espace'}) %>
+<body>
+<div class="app-wrapper">
+  <%- include('../partials/sidebar-student', {activePage: 'dashboard', user, unreadMessages}) %>
+  <div class="main-content">
+    <div class="topbar">
+      <div class="topbar-title">
+        <h1>Bonjour, <%= user.first_name %> 👋</h1>
+        <p>Continuez votre apprentissage numérique</p>
+      </div>
+      <div class="level-badge">
+        <%= user.badge_icon || '🌱' %> <%= user.level_name || 'Débutant' %> • <%= user.total_points %> pts
+      </div>
+    </div>
+
+    <div class="page-content">
+      <!-- Stats Row -->
+      <div class="grid-4" style="margin-bottom:28px">
+        <div class="stat-card">
+          <div class="stat-icon" style="background:#EBF8FF">🏆</div>
+          <div class="stat-info">
+            <h3><%= user.total_points %></h3>
+            <p>Points totaux</p>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background:#F0FFF4">📚</div>
+          <div class="stat-info">
+            <h3><%= progress.filter(p => p.is_completed).length %></h3>
+            <p>Cours terminés</p>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background:#FFFBEB">⭐</div>
+          <div class="stat-info">
+            <h3><%= badges.length %></h3>
+            <p>Badges gagnés</p>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background:#FFF5F5">🎯</div>
+          <div class="stat-info">
+            <h3><%= recentActivity.length %></h3>
+            <p>Exercices récents</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Level Progress -->
+      <% if (nextLevel) { %>
+      <div class="card" style="margin-bottom:28px;background:linear-gradient(135deg,var(--navy),var(--navy-light));color:white">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div>
+            <h3 style="color:white"><%= user.badge_icon %> Niveau : <%= user.level_name %></h3>
+            <p style="opacity:0.8;font-size:0.9rem">Prochain niveau : <%= nextLevel.name %> <%= nextLevel.badge_icon %></p>
+          </div>
+          <div style="font-size:2rem"><%= nextLevel.badge_icon %></div>
+        </div>
+        <div style="background:rgba(255,255,255,0.2);border-radius:999px;height:12px;overflow:hidden">
+          <div style="width:<%=(Math.min(100,((user.total_points - (user.total_points < nextLevel.min_points ? 0 : 0)) / nextLevel.min_points)*100))%>%;background:var(--gold);height:100%;border-radius:999px;transition:width 0.8s"></div>
+        </div>
+        <p style="opacity:0.8;font-size:0.85rem;margin-top:8px"><%= user.total_points %> / <%= nextLevel.min_points %> points pour le prochain niveau</p>
+      </div>
+      <% } %>
+
+      <div class="grid-2">
+        <!-- Modules -->
+        <div class="card">
+          <div class="card-header">
+            <h3>📚 Modules de cours</h3>
+            <a href="/student/courses" class="btn btn-outline btn-sm">Voir tout</a>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <% const moduleColors = {'Email':'#3B82F6','Ordinateur':'#8B5CF6','Internet':'#10B981','Smartphone':'#F59E0B'}; %>
+            <% modules.forEach(m => { %>
+            <a href="/student/courses" class="module-card" style="background:<%= m.color || '#3B82F6' %>">
+              <div class="module-icon"><%= m.icon %></div>
+              <h3 style="font-size:0.9rem"><%= m.name %></h3>
+              <p><%= m.course_count %> cours</p>
+            </a>
+            <% }) %>
+          </div>
+        </div>
+
+        <!-- Recent Activity -->
+        <div class="card">
+          <div class="card-header">
+            <h3>⚡ Activité récente</h3>
+          </div>
+          <% if (recentActivity.length === 0) { %>
+          <div style="text-align:center;padding:24px;color:var(--muted)">
+            <div style="font-size:2rem">🎓</div>
+            <p>Commencez votre premier exercice !</p>
+            <a href="/student/courses" class="btn btn-primary btn-sm" style="margin-top:12px">Voir les cours</a>
+          </div>
+          <% } else { %>
+          <% recentActivity.forEach(a => { %>
+          <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
+            <div style="width:36px;height:36px;border-radius:50%;background:<%= a.is_correct ? '#D1FAE5' : '#FEE2E2' %>;display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0">
+              <%= a.is_correct ? '✅' : '❌' %>
+            </div>
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:700;font-size:0.9rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><%= a.title %></div>
+              <div style="color:var(--muted);font-size:0.8rem"><%= a.course_name %></div>
+            </div>
+            <div style="font-weight:800;color:var(--gold);font-size:0.9rem">+<%= a.points_earned %>pts</div>
+          </div>
+          <% }) %>
+          <% } %>
+        </div>
+      </div>
+
+      <!-- Badges -->
+      <% if (badges.length > 0) { %>
+      <div class="card" style="margin-top:24px">
+        <div class="card-header">
+          <h3>🏅 Mes Badges</h3>
+          <a href="/student/progress" class="btn btn-outline btn-sm">Voir tout</a>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px">
+          <% badges.forEach(b => { %>
+          <div style="background:linear-gradient(135deg,var(--navy),var(--navy-light));color:white;padding:12px 20px;border-radius:12px;display:flex;align-items:center;gap:10px">
+            <span style="font-size:1.5rem"><%= b.icon %></span>
+            <div>
+              <div style="font-weight:700;font-size:0.85rem"><%= b.name %></div>
+              <div style="font-size:0.75rem;opacity:0.7"><%= b.description %></div>
+            </div>
+          </div>
+          <% }) %>
+        </div>
+      </div>
+      <% } %>
+    </div>
+  </div>
+</div>
+<%- include('../partials/scripts') %>
+</body>
+</html>

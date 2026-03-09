@@ -1,0 +1,171 @@
+const express = require('express');
+const router = express.Router();
+const pool = require('../config/database');
+const { requireAuth } = require('../middleware/auth');
+
+router.use(requireAuth);
+
+// Inbox
+router.get('/', async (req, res) => {
+  try {
+    const userId = req.session.userId;
+
+    const [inbox, sent, trainers] = await Promise.all([
+      pool.query(`
+        SELECT m.*, 
+               u.first_name || ' ' || u.last_name as sender_name,
+               u.username as sender_username,
+               u.avatar_color as sender_color,
+               u.role as sender_role
+        FROM messages m
+        JOIN users u ON u.id = m.sender_id
+        WHERE m.recipient_id = $1 AND m.parent_id IS NULL
+        ORDER BY m.created_at DESC
+      `, [userId]),
+      pool.query(`
+        SELECT m.*,
+               u.first_name || ' ' || u.last_name as recipient_name,
+               u.username as recipient_username
+        FROM messages m
+        JOIN users u ON u.id = m.recipient_id
+        WHERE m.sender_id = $1 AND m.parent_id IS NULL
+        ORDER BY m.created_at DESC
+      `, [userId]),
+      pool.query(`
+        SELECT id, username, first_name, last_name, avatar_color FROM users
+        WHERE role IN ('trainer', 'admin') AND is_active = true AND id != $1
+        ORDER BY first_name
+      `, [userId]),
+    ]);
+
+    const unread = inbox.rows.filter(m => !m.is_read).length;
+
+    res.render('messages/inbox', {
+      title: 'Messagerie',
+      inbox: inbox.rows,
+      sent: sent.rows,
+      trainers: trainers.rows,
+      unread,
+    });
+  } catch (err) {
+    console.error(err);
+    res.render('error', { title: 'Erreur', message: err.message, user: res.locals.user });
+  }
+});
+
+// View message thread
+router.get('/:id', async (req, res) => {
+  try {
+    const userId = req.session.userId;
+    const messageId = req.params.id;
+
+    const msgRes = await pool.query(`
+      SELECT m.*, 
+             s.first_name || ' ' || s.last_name as sender_name,
+             s.username as sender_username, s.avatar_color as sender_color, s.role as sender_role,
+             r.first_name || ' ' || r.last_name as recipient_name
+      FROM messages m
+      JOIN users s ON s.id = m.sender_id
+      JOIN users r ON r.id = m.recipient_id
+      WHERE m.id = $1 AND (m.sender_id = $2 OR m.recipient_id = $2)
+    `, [messageId, userId]);
+
+    if (!msgRes.rows[0]) return res.redirect('/messages');
+
+    // Mark as read
+    await pool.query(`UPDATE messages SET is_read = true WHERE id = $1 AND recipient_id = $2`, [messageId, userId]);
+
+    // Get replies
+    const replies = await pool.query(`
+      SELECT m.*,
+             s.first_name || ' ' || s.last_name as sender_name,
+             s.username as sender_username, s.avatar_color as sender_color
+      FROM messages m
+      JOIN users s ON s.id = m.sender_id
+      WHERE m.parent_id = $1
+      ORDER BY m.created_at ASC
+    `, [messageId]);
+
+    res.render('messages/thread', {
+      title: msgRes.rows[0].subject || 'Message',
+      message: msgRes.rows[0],
+      replies: replies.rows,
+    });
+  } catch (err) {
+    console.error(err);
+    res.render('error', { title: 'Erreur', message: err.message, user: res.locals.user });
+  }
+});
+
+// Send new message
+router.post('/send', async (req, res) => {
+  try {
+    const { recipient_id, subject, body } = req.body;
+    const userId = req.session.userId;
+
+    if (!recipient_id || !body) {
+      req.session.flash = { error: 'Veuillez remplir tous les champs obligatoires.' };
+      return res.redirect('/messages');
+    }
+
+    await pool.query(`
+      INSERT INTO messages (sender_id, recipient_id, subject, body)
+      VALUES ($1, $2, $3, $4)
+    `, [userId, recipient_id, subject || '(Sans objet)', body]);
+
+    // Notify recipient
+    const sender = await pool.query('SELECT first_name, last_name FROM users WHERE id = $1', [userId]);
+    await pool.query(`
+      INSERT INTO notifications (user_id, type, title, message)
+      VALUES ($1, 'message', 'Nouveau message', $2)
+    `, [recipient_id, `${sender.rows[0].first_name} ${sender.rows[0].last_name} vous a envoyé un message.`]);
+
+    req.session.flash = { success: 'Message envoyé avec succès !' };
+    res.redirect('/messages');
+  } catch (err) {
+    console.error(err);
+    res.redirect('/messages');
+  }
+});
+
+// Reply to message
+router.post('/:id/reply', async (req, res) => {
+  try {
+    const { body } = req.body;
+    const userId = req.session.userId;
+    const parentId = req.params.id;
+
+    const parent = await pool.query('SELECT * FROM messages WHERE id = $1', [parentId]);
+    if (!parent.rows[0]) return res.redirect('/messages');
+
+    const recipientId = parent.rows[0].sender_id === userId
+      ? parent.rows[0].recipient_id
+      : parent.rows[0].sender_id;
+
+    await pool.query(`
+      INSERT INTO messages (sender_id, recipient_id, subject, body, parent_id)
+      VALUES ($1, $2, $3, $4, $5)
+    `, [userId, recipientId, `Re: ${parent.rows[0].subject}`, body, parentId]);
+
+    req.session.flash = { success: 'Réponse envoyée !' };
+    res.redirect(`/messages/${parentId}`);
+  } catch (err) {
+    console.error(err);
+    res.redirect('/messages');
+  }
+});
+
+// API: unread count
+router.get('/api/unread', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT COUNT(*) as count FROM messages WHERE recipient_id = $1 AND is_read = false',
+      [req.session.userId]
+    );
+    res.json({ count: result.rows[0].count });
+  } catch (err) {
+    res.json({ count: 0 });
+  }
+});
+
+module.exports = router;

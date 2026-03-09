@@ -1,0 +1,41 @@
+<%- include('../partials/head', {title: 'Paramètres'}) %>
+<body>
+<div class="app-wrapper">
+  <%- include('../partials/sidebar-trainer', {activePage: 'settings', user, unreadMessages: 0}) %>
+  <div class="main-content">
+    <div class="topbar">
+      <div class="topbar-title"><h1>⚙️ Paramètres du compte</h1></div>
+    </div>
+    <div class="page-content" style="max-width:600px">
+      <% if (success) { %><div class="alert alert-success">✅ <%= success %></div><% } %>
+      <% if (error) { %><div class="alert alert-error">⚠️ <%= error %></div><% } %>
+      <div class="card">
+        <h3 style="margin-bottom:24px">👤 Mon profil formateur</h3>
+        <form method="POST" action="/trainer/settings">
+          <div class="form-group">
+            <label class="form-label">Prénom</label>
+            <input type="text" name="first_name" class="form-control" value="<%= user.first_name %>">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Identifiant</label>
+            <input type="text" class="form-control" value="<%= user.username %>" disabled style="opacity:0.6">
+          </div>
+          <hr style="margin:24px 0;border:none;border-top:1px solid var(--border)">
+          <h3 style="margin-bottom:16px">🔒 Modifier le mot de passe</h3>
+          <div class="form-group">
+            <label class="form-label">Nouveau mot de passe</label>
+            <input type="password" name="password" class="form-control" placeholder="Laisser vide pour garder l'actuel">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Confirmer</label>
+            <input type="password" name="confirm_password" class="form-control">
+          </div>
+          <button type="submit" class="btn btn-primary btn-block">💾 Sauvegarder</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+<%- include('../partials/scripts') %>
+</body>
+</html>

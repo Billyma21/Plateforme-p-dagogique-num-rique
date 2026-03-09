@@ -1,0 +1,84 @@
+const express = require('express');
+const router = express.Router();
+const pool = require('../config/database');
+const bcrypt = require('bcryptjs');
+const { requireTrainer } = require('../middleware/auth');
+
+router.get('/', requireTrainer, async (req, res) => {
+  const tid = req.session.userId;
+  try {
+    const trainers = await pool.query(`SELECT id, first_name, username, avatar_color FROM users WHERE role IN ('trainer','admin') AND is_active = true ORDER BY first_name`);
+    const students = await pool.query(`SELECT u.*, l.name as level_name FROM users u LEFT JOIN levels l ON u.level_id = l.id WHERE u.role = 'student' AND u.is_active = true ORDER BY u.location, u.last_name`);
+    const unread = await pool.query(`SELECT COUNT(*) FROM messages WHERE recipient_id = $1 AND is_read = false`, [tid]);
+    const recentActivity = await pool.query(`SELECT u.first_name, u.last_name, er.points_earned, e.title, er.completed_at FROM exercise_results er JOIN users u ON er.student_id = u.id JOIN exercises e ON er.exercise_id = e.id ORDER BY er.completed_at DESC LIMIT 8`);
+    res.render('trainer/dashboard', {
+      trainers: trainers.rows,
+      students: students.rows,
+      recentActivity: recentActivity.rows,
+      unreadMessages: parseInt(unread.rows[0].count),
+      user: { firstName: req.session.firstName }
+    });
+  } catch (err) {
+    console.error(err);
+    res.redirect('/login');
+  }
+});
+
+router.get('/students/:id', requireTrainer, async (req, res) => {
+  try {
+    const student = await pool.query(`SELECT u.*, l.name as level_name, l.badge_icon FROM users u LEFT JOIN levels l ON u.level_id = l.id WHERE u.id = $1`, [req.params.id]);
+    if (!student.rows.length) return res.redirect('/trainer');
+    const progress = await pool.query(`SELECT cp.*, c.name, c.total_points, m.name as module_name FROM course_progress cp JOIN courses c ON cp.course_id = c.id JOIN modules m ON c.module_id = m.id WHERE cp.student_id = $1`, [req.params.id]);
+    const results = await pool.query(`SELECT er.*, e.title, e.points, c.name as course_name FROM exercise_results er JOIN exercises e ON er.exercise_id = e.id JOIN courses c ON e.course_id = c.id WHERE er.student_id = $1 ORDER BY er.completed_at DESC LIMIT 20`, [req.params.id]);
+    res.render('trainer/student-detail', { student: student.rows[0], progress: progress.rows, results: results.rows, user: { firstName: req.session.firstName } });
+  } catch (err) {
+    res.redirect('/trainer');
+  }
+});
+
+router.get('/messages', requireTrainer, async (req, res) => {
+  const tid = req.session.userId;
+  try {
+    const inbox = await pool.query(`SELECT m.*, u.first_name as sender_name, u.avatar_color, u.role as sender_role FROM messages m JOIN users u ON m.sender_id = u.id WHERE m.recipient_id = $1 ORDER BY m.created_at DESC`, [tid]);
+    const users = await pool.query(`SELECT id, first_name, role, avatar_color FROM users WHERE is_active = true AND id != $1 ORDER BY role, first_name`, [tid]);
+    await pool.query(`UPDATE messages SET is_read = true WHERE recipient_id = $1`, [tid]);
+    res.render('trainer/messages', { inbox: inbox.rows, users: users.rows, user: { firstName: req.session.firstName } });
+  } catch (err) {
+    res.redirect('/trainer');
+  }
+});
+
+router.post('/messages/send', requireTrainer, async (req, res) => {
+  const { recipient_id, subject, body } = req.body;
+  await pool.query(`INSERT INTO messages (sender_id, recipient_id, subject, body) VALUES ($1,$2,$3,$4)`, [req.session.userId, recipient_id, subject, body]);
+  res.json({ success: true });
+});
+
+router.get('/settings', requireTrainer, async (req, res) => {
+  const user = await pool.query(`SELECT * FROM users WHERE id = $1`, [req.session.userId]);
+  res.render('trainer/settings', { user: user.rows[0], success: null, error: null });
+});
+
+router.post('/settings', requireTrainer, async (req, res) => {
+  const { first_name, password, confirm_password } = req.body;
+  const tid = req.session.userId;
+  try {
+    if (password && password !== confirm_password) {
+      const user = await pool.query(`SELECT * FROM users WHERE id = $1`, [tid]);
+      return res.render('trainer/settings', { user: user.rows[0], error: 'Mots de passe différents', success: null });
+    }
+    if (password) {
+      const hash = await bcrypt.hash(password, 12);
+      await pool.query(`UPDATE users SET first_name = $1, password_hash = $2 WHERE id = $3`, [first_name, hash, tid]);
+    } else {
+      await pool.query(`UPDATE users SET first_name = $1 WHERE id = $2`, [first_name, tid]);
+    }
+    req.session.firstName = first_name;
+    const user = await pool.query(`SELECT * FROM users WHERE id = $1`, [tid]);
+    res.render('trainer/settings', { user: user.rows[0], success: 'Profil mis à jour !', error: null });
+  } catch (err) {
+    res.redirect('/trainer/settings');
+  }
+});
+
+module.exports = router;

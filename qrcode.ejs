@@ -1,0 +1,304 @@
+const express = require('express');
+const router = express.Router();
+const pool = require('../config/database');
+const { requireStudent } = require('../middleware/auth');
+const QRCode = require('qrcode');
+
+// Student dashboard
+router.get('/', requireStudent, async (req, res) => {
+  const sid = req.session.userId;
+  try {
+    const [user, progress, recentActivity, unreadMessages] = await Promise.all([
+      pool.query(`SELECT u.*, l.name as level_name, l.badge_icon, l.color as level_color FROM users u LEFT JOIN levels l ON u.level_id = l.id WHERE u.id = $1`, [sid]),
+      pool.query(`SELECT cp.*, c.name as course_name, c.total_points, m.name as module_name, m.icon as module_icon FROM course_progress cp JOIN courses c ON cp.course_id = c.id JOIN modules m ON c.module_id = m.id WHERE cp.student_id = $1 ORDER BY cp.started_at DESC LIMIT 5`, [sid]),
+      pool.query(`SELECT er.*, e.title, c.name as course_name FROM exercise_results er JOIN exercises e ON er.exercise_id = e.id JOIN courses c ON er.course_id = c.id WHERE er.student_id = $1 ORDER BY er.completed_at DESC LIMIT 5`, [sid]),
+      pool.query(`SELECT COUNT(*) FROM messages WHERE recipient_id = $1 AND is_read = false`, [sid]),
+    ]);
+    const modules = await pool.query(`SELECT m.*, COUNT(c.id) as course_count FROM modules m LEFT JOIN courses c ON c.module_id = m.id GROUP BY m.id ORDER BY m.order_index`);
+    const badges = await pool.query(`SELECT b.*, sb.earned_at FROM student_badges sb JOIN badges b ON sb.badge_id = b.id WHERE sb.student_id = $1 ORDER BY sb.earned_at DESC LIMIT 6`, [sid]);
+    
+    const nextLevel = await pool.query(`SELECT * FROM levels WHERE min_points > $1 ORDER BY min_points LIMIT 1`, [user.rows[0].total_points]);
+
+    res.render('student/dashboard', {
+      user: user.rows[0],
+      progress: progress.rows,
+      recentActivity: recentActivity.rows,
+      modules: modules.rows,
+      badges: badges.rows,
+      unreadMessages: parseInt(unreadMessages.rows[0].count),
+      nextLevel: nextLevel.rows[0] || null,
+    });
+  } catch (err) {
+    console.error(err);
+    res.render('student/dashboard', { user: {}, progress: [], recentActivity: [], modules: [], badges: [], unreadMessages: 0, nextLevel: null });
+  }
+});
+
+// Courses list
+router.get('/courses', requireStudent, async (req, res) => {
+  const sid = req.session.userId;
+  try {
+    const modules = await pool.query(`SELECT * FROM modules ORDER BY order_index`);
+    const courses = await pool.query(`
+      SELECT c.*, m.name as module_name, m.icon as module_icon, m.color as module_color,
+        cp.exercises_completed, cp.total_exercises, cp.points_earned, cp.is_completed,
+        (SELECT COUNT(*) FROM exercises e WHERE e.course_id = c.id) as exercise_count
+      FROM courses c
+      JOIN modules m ON c.module_id = m.id
+      LEFT JOIN course_progress cp ON cp.course_id = c.id AND cp.student_id = $1
+      ORDER BY m.order_index, c.order_index
+    `, [sid]);
+    res.render('student/courses', { modules: modules.rows, courses: courses.rows, user: { firstName: req.session.firstName } });
+  } catch (err) {
+    console.error(err);
+    res.redirect('/student');
+  }
+});
+
+// QR code for course
+router.get('/courses/:id/qrcode', requireStudent, async (req, res) => {
+  try {
+    const course = await pool.query(`SELECT c.*, m.name as module_name FROM courses c JOIN modules m ON c.module_id = m.id WHERE c.id = $1`, [req.params.id]);
+    if (!course.rows.length) return res.redirect('/student/courses');
+    const url = `${req.protocol}://${req.get('host')}/student/courses/${req.params.id}/exercises`;
+    const qrDataUrl = await QRCode.toDataURL(url, { width: 300, margin: 2, color: { dark: '#1E3A5F', light: '#FFFFFF' } });
+    res.render('student/qrcode', { course: course.rows[0], qrDataUrl, url, user: { firstName: req.session.firstName } });
+  } catch (err) {
+    console.error(err);
+    res.redirect('/student/courses');
+  }
+});
+
+// Exercises for a course
+router.get('/courses/:id/exercises', requireStudent, async (req, res) => {
+  const sid = req.session.userId;
+  const courseId = req.params.id;
+  try {
+    const course = await pool.query(`SELECT c.*, m.name as module_name, m.color as module_color FROM courses c JOIN modules m ON c.module_id = m.id WHERE c.id = $1`, [courseId]);
+    if (!course.rows.length) return res.redirect('/student/courses');
+    const exercises = await pool.query(`SELECT e.*, er.is_correct, er.points_earned, er.completed_at FROM exercises e LEFT JOIN exercise_results er ON er.exercise_id = e.id AND er.student_id = $1 WHERE e.course_id = $2 ORDER BY e.order_index`, [sid, courseId]);
+    let progress = await pool.query(`SELECT * FROM course_progress WHERE student_id = $1 AND course_id = $2`, [sid, courseId]);
+    if (!progress.rows.length) {
+      await pool.query(`INSERT INTO course_progress (student_id, course_id, total_exercises) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, [sid, courseId, exercises.rows.length]);
+      progress = await pool.query(`SELECT * FROM course_progress WHERE student_id = $1 AND course_id = $2`, [sid, courseId]);
+    }
+    res.render('student/exercises', {
+      course: course.rows[0],
+      exercises: exercises.rows,
+      progress: progress.rows[0],
+      user: { firstName: req.session.firstName }
+    });
+  } catch (err) {
+    console.error(err);
+    res.redirect('/student/courses');
+  }
+});
+
+// Single exercise
+router.get('/exercises/:id', requireStudent, async (req, res) => {
+  const sid = req.session.userId;
+  try {
+    const ex = await pool.query(`SELECT e.*, c.name as course_name, c.id as course_id, m.color as module_color FROM exercises e JOIN courses c ON e.course_id = c.id JOIN modules m ON c.module_id = m.id WHERE e.id = $1`, [req.params.id]);
+    if (!ex.rows.length) return res.redirect('/student/courses');
+    const result = await pool.query(`SELECT * FROM exercise_results WHERE student_id = $1 AND exercise_id = $2`, [sid, req.params.id]);
+    res.render('student/exercise', {
+      exercise: ex.rows[0],
+      previousResult: result.rows[0] || null,
+      user: { firstName: req.session.firstName }
+    });
+  } catch (err) {
+    console.error(err);
+    res.redirect('/student/courses');
+  }
+});
+
+// Submit exercise answer
+router.post('/exercises/:id/submit', requireStudent, async (req, res) => {
+  const sid = req.session.userId;
+  const exId = req.params.id;
+  try {
+    const ex = await pool.query(`SELECT * FROM exercises WHERE id = $1`, [exId]);
+    if (!ex.rows.length) return res.status(404).json({ error: 'Exercice introuvable' });
+    const exercise = ex.rows[0];
+    const { answers } = req.body;
+    const parsedAnswers = typeof answers === 'string' ? JSON.parse(answers) : answers;
+    const { isCorrect, feedback } = checkAnswer(exercise, parsedAnswers);
+    const pointsEarned = isCorrect ? exercise.points : Math.floor(exercise.points * 0.3);
+
+    const existing = await pool.query(`SELECT * FROM exercise_results WHERE student_id = $1 AND exercise_id = $2`, [sid, exId]);
+    if (!existing.rows.length) {
+      await pool.query(`
+        INSERT INTO exercise_results (student_id, exercise_id, course_id, answers, is_correct, points_earned)
+        VALUES ($1,$2,$3,$4,$5,$6)
+      `, [sid, exId, exercise.course_id, JSON.stringify(parsedAnswers), isCorrect, pointsEarned]);
+      // Update student total points
+      await pool.query(`UPDATE users SET total_points = total_points + $1 WHERE id = $2`, [pointsEarned, sid]);
+      // Update level
+      await pool.query(`UPDATE users SET level_id = (SELECT id FROM levels WHERE min_points <= (SELECT total_points FROM users WHERE id = $1) ORDER BY min_points DESC LIMIT 1) WHERE id = $1`, [sid]);
+      // Update course progress
+      await pool.query(`
+        UPDATE course_progress SET
+          exercises_completed = (SELECT COUNT(*) FROM exercise_results WHERE student_id = $1 AND course_id = $2),
+          points_earned = (SELECT COALESCE(SUM(points_earned),0) FROM exercise_results WHERE student_id = $1 AND course_id = $2),
+          is_completed = (
+            (SELECT COUNT(*) FROM exercise_results WHERE student_id = $1 AND course_id = $2) >=
+            (SELECT COUNT(*) FROM exercises WHERE course_id = $2)
+          )
+        WHERE student_id = $1 AND course_id = $2
+      `, [sid, exercise.course_id]);
+      // Check badges
+      await checkAndAwardBadges(sid, pool);
+    }
+    const updatedUser = await pool.query(`SELECT total_points, level_id FROM users WHERE id = $1`, [sid]);
+    res.json({
+      success: true,
+      isCorrect,
+      pointsEarned,
+      feedback,
+      explanation: exercise.explanation,
+      totalPoints: updatedUser.rows[0].total_points,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+function checkAnswer(exercise, answers) {
+  const data = exercise.data;
+  let isCorrect = false;
+  let feedback = '';
+  switch (exercise.type) {
+    case 'qcm':
+      isCorrect = parseInt(answers.selected) === data.correct;
+      feedback = isCorrect ? 'Bravo ! Bonne réponse !' : `Incorrect. La bonne réponse était : "${data.options[data.correct]}"`;
+      break;
+    case 'vrai_faux':
+      const userAnswers = answers.responses || [];
+      isCorrect = data.statements.every((s, i) => String(userAnswers[i]) === String(s.answer));
+      const correct = data.statements.filter((s, i) => String(userAnswers[i]) === String(s.answer)).length;
+      feedback = isCorrect ? 'Parfait ! Toutes les réponses sont correctes !' : `${correct}/${data.statements.length} bonnes réponses.`;
+      break;
+    case 'association':
+      const pairs = answers.pairs || {};
+      isCorrect = data.pairs.every((p, i) => pairs[i] === p.right);
+      feedback = isCorrect ? 'Excellent ! Toutes les associations sont correctes !' : 'Certaines associations sont incorrectes.';
+      break;
+    case 'ordre':
+      const order = answers.order || [];
+      isCorrect = order.every((v, i) => parseInt(v) === data.correct_order[i]);
+      feedback = isCorrect ? 'Super ! L\'ordre est correct !' : 'L\'ordre n\'est pas tout à fait correct.';
+      break;
+    case 'texte_a_trous':
+      const blanks = answers.blanks || [];
+      isCorrect = data.blanks.every((b, i) => (blanks[i] || '').toLowerCase().trim() === b.toLowerCase().trim());
+      feedback = isCorrect ? 'Excellent ! Tous les mots sont corrects !' : 'Certains mots ne sont pas corrects.';
+      break;
+    default:
+      isCorrect = false;
+  }
+  return { isCorrect, feedback };
+}
+
+async function checkAndAwardBadges(studentId, pool) {
+  const user = await pool.query(`SELECT total_points FROM users WHERE id = $1`, [studentId]);
+  const points = user.rows[0].total_points;
+  const exCount = await pool.query(`SELECT COUNT(*) FROM exercise_results WHERE student_id = $1`, [studentId]);
+  const exCompleted = parseInt(exCount.rows[0].count);
+  const badgeChecks = [
+    { condition: exCompleted >= 1, type: 'exercises_completed', value: 1 },
+    { condition: exCompleted >= 10, type: 'exercises_completed', value: 10 },
+    { condition: exCompleted >= 25, type: 'exercises_completed', value: 25 },
+    { condition: points >= 100, type: 'points', value: 100 },
+    { condition: points >= 500, type: 'points', value: 500 },
+    { condition: points >= 1000, type: 'points', value: 1000 },
+  ];
+  for (const check of badgeChecks) {
+    if (check.condition) {
+      const badge = await pool.query(`SELECT id FROM badges WHERE condition_type = $1 AND condition_value = $2`, [check.type, check.value]);
+      if (badge.rows.length) {
+        await pool.query(`INSERT INTO student_badges (student_id, badge_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [studentId, badge.rows[0].id]);
+      }
+    }
+  }
+}
+
+// Planning page
+router.get('/planning', requireStudent, async (req, res) => {
+  try {
+    const pdfs = await pool.query(`SELECT * FROM pdf_files WHERE type = 'planning' AND is_active = true ORDER BY created_at DESC`);
+    res.render('student/planning', { pdfs: pdfs.rows, user: { firstName: req.session.firstName } });
+  } catch (err) {
+    res.render('student/planning', { pdfs: [], user: { firstName: req.session.firstName } });
+  }
+});
+
+// Progress page
+router.get('/progress', requireStudent, async (req, res) => {
+  const sid = req.session.userId;
+  try {
+    const user = await pool.query(`SELECT u.*, l.name as level_name, l.badge_icon, l.color as level_color, l.max_points FROM users u JOIN levels l ON u.level_id = l.id WHERE u.id = $1`, [sid]);
+    const progress = await pool.query(`SELECT cp.*, c.name, c.total_points, m.name as module_name, m.color as module_color, m.icon FROM course_progress cp JOIN courses c ON cp.course_id = c.id JOIN modules m ON c.module_id = m.id WHERE cp.student_id = $1 ORDER BY m.order_index, c.order_index`, [sid]);
+    const badges = await pool.query(`SELECT b.*, sb.earned_at FROM student_badges sb JOIN badges b ON sb.badge_id = b.id WHERE sb.student_id = $1`, [sid]);
+    const history = await pool.query(`SELECT er.*, e.title, e.points, c.name as course_name FROM exercise_results er JOIN exercises e ON er.exercise_id = e.id JOIN courses c ON e.course_id = c.id WHERE er.student_id = $1 ORDER BY er.completed_at DESC LIMIT 20`, [sid]);
+    const nextLevel = await pool.query(`SELECT * FROM levels WHERE min_points > $1 ORDER BY min_points LIMIT 1`, [user.rows[0].total_points]);
+    res.render('student/progress', { user: user.rows[0], progress: progress.rows, badges: badges.rows, history: history.rows, nextLevel: nextLevel.rows[0] || null });
+  } catch (err) {
+    console.error(err);
+    res.redirect('/student');
+  }
+});
+
+// Messages
+router.get('/messages', requireStudent, async (req, res) => {
+  const sid = req.session.userId;
+  try {
+    const trainers = await pool.query(`SELECT id, first_name, username, avatar_color FROM users WHERE role IN ('trainer','admin') AND is_active = true ORDER BY first_name`);
+    const inbox = await pool.query(`SELECT m.*, u.first_name as sender_name, u.avatar_color FROM messages m JOIN users u ON m.sender_id = u.id WHERE m.recipient_id = $1 ORDER BY m.created_at DESC`, [sid]);
+    const sent = await pool.query(`SELECT m.*, u.first_name as recipient_name FROM messages m JOIN users u ON m.recipient_id = u.id WHERE m.sender_id = $1 ORDER BY m.created_at DESC`, [sid]);
+    await pool.query(`UPDATE messages SET is_read = true WHERE recipient_id = $1`, [sid]);
+    res.render('student/messages', { trainers: trainers.rows, inbox: inbox.rows, sent: sent.rows, user: { firstName: req.session.firstName } });
+  } catch (err) {
+    res.redirect('/student');
+  }
+});
+
+router.post('/messages/send', requireStudent, async (req, res) => {
+  const { recipient_id, subject, body } = req.body;
+  try {
+    await pool.query(`INSERT INTO messages (sender_id, recipient_id, subject, body) VALUES ($1,$2,$3,$4)`, [req.session.userId, recipient_id, subject, body]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Erreur envoi message' });
+  }
+});
+
+// Settings
+router.get('/settings', requireStudent, async (req, res) => {
+  const user = await pool.query(`SELECT * FROM users WHERE id = $1`, [req.session.userId]);
+  res.render('student/settings', { user: user.rows[0], success: null, error: null });
+});
+
+router.post('/settings', requireStudent, async (req, res) => {
+  const { first_name, last_name, password, confirm_password } = req.body;
+  const sid = req.session.userId;
+  try {
+    if (password && password !== confirm_password) {
+      const user = await pool.query(`SELECT * FROM users WHERE id = $1`, [sid]);
+      return res.render('student/settings', { user: user.rows[0], error: 'Les mots de passe ne correspondent pas.', success: null });
+    }
+    if (password && password.length >= 6) {
+      const hash = await bcrypt.hash(password, 12);
+      await pool.query(`UPDATE users SET password_hash = $1, first_name = $2, last_name = $3, updated_at = NOW() WHERE id = $4`, [hash, first_name, last_name, sid]);
+    } else {
+      await pool.query(`UPDATE users SET first_name = $1, last_name = $2, updated_at = NOW() WHERE id = $3`, [first_name, last_name, sid]);
+    }
+    req.session.firstName = first_name;
+    const user = await pool.query(`SELECT * FROM users WHERE id = $1`, [sid]);
+    res.render('student/settings', { user: user.rows[0], success: 'Profil mis à jour avec succès !', error: null });
+  } catch (err) {
+    res.redirect('/student/settings');
+  }
+});
+
+module.exports = router;

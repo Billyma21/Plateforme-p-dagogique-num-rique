@@ -1,0 +1,42 @@
+<%- include('../partials/head', {title: 'Connexion'}) %>
+<body>
+<div class="auth-page">
+  <div class="auth-card">
+    <div style="text-align:center;margin-bottom:24px">
+      <div style="font-size:3rem">💻</div>
+      <h2>DIGI REFERENT</h2>
+      <p class="subtitle">Connectez-vous à votre espace</p>
+    </div>
+
+    <% if (error) { %>
+    <div class="alert alert-error">⚠️ <%= error %></div>
+    <% } %>
+    <% if (success) { %>
+    <div class="alert alert-success">✅ Compte créé ! Vous pouvez maintenant vous connecter.</div>
+    <% } %>
+
+    <form method="POST" action="/login">
+      <div class="form-group">
+        <label class="form-label">Identifiant / Pseudo</label>
+        <input type="text" name="username" class="form-control" placeholder="Ex: marie.dupont" required autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Mot de passe</label>
+        <input type="password" name="password" class="form-control" placeholder="••••••••" required autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn btn-primary btn-block btn-lg" style="margin-top:8px">
+        🔑 Se connecter
+      </button>
+    </form>
+
+    <div style="text-align:center;margin-top:24px;color:var(--muted)">
+      Pas encore de compte ?
+      <a href="/register" style="color:var(--navy);font-weight:700;text-decoration:none"> S'inscrire</a>
+    </div>
+    <div style="text-align:center;margin-top:8px">
+      <a href="/" style="color:var(--muted);font-size:0.85rem;text-decoration:none">← Retour à l'accueil</a>
+    </div>
+  </div>
+</div>
+</body>
+</html>

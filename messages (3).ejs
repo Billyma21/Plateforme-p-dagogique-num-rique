@@ -1,0 +1,272 @@
+const express = require('express');
+const router = express.Router();
+const pool = require('../config/database');
+const { requireAuth } = require('../middleware/auth');
+
+router.use(requireAuth);
+
+// Exercise game page for a course (QR code destination)
+router.get('/course/:courseId', async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const userId = req.session.userId;
+
+    const [courseRes, exercises] = await Promise.all([
+      pool.query(`
+        SELECT c.*, m.name as module_name, m.icon, m.color
+        FROM courses c JOIN modules m ON m.id = c.module_id
+        WHERE c.id = $1
+      `, [courseId]),
+      pool.query(`
+        SELECT e.*,
+          (SELECT json_agg(row_to_json(ea.*) ORDER BY ea.created_at DESC)
+           FROM exercise_attempts ea WHERE ea.exercise_id = e.id AND ea.user_id = $1 LIMIT 1) as last_attempt
+        FROM exercises e WHERE e.course_id = $2
+        ORDER BY e.order_index
+      `, [userId, courseId]),
+    ]);
+
+    if (!courseRes.rows[0]) {
+      return res.render('error', { title: 'Cours introuvable', message: 'Ce cours n\'existe pas.', user: res.locals.user });
+    }
+
+    // Ensure progress entry
+    if (req.session.role === 'student') {
+      await pool.query(`
+        INSERT INTO course_progress (user_id, course_id, exercises_total)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (user_id, course_id) DO UPDATE SET exercises_total = $3
+      `, [userId, courseId, exercises.rows.length]);
+    }
+
+    res.render('exercises/game', {
+      title: `Exercices — ${courseRes.rows[0].name}`,
+      course: courseRes.rows[0],
+      exercises: exercises.rows,
+    });
+  } catch (err) {
+    console.error(err);
+    res.render('error', { title: 'Erreur', message: err.message, user: res.locals.user });
+  }
+});
+
+// Submit exercise answer (AJAX)
+router.post('/submit', async (req, res) => {
+  try {
+    const { exercise_id, answer, time_spent } = req.body;
+    const userId = req.session.userId;
+
+    const exerciseRes = await pool.query('SELECT * FROM exercises WHERE id = $1', [exercise_id]);
+    const exercise = exerciseRes.rows[0];
+    if (!exercise) return res.json({ success: false, message: 'Exercice introuvable' });
+
+    // Check if already attempted (limit to 3 attempts)
+    const attemptsRes = await pool.query(
+      'SELECT COUNT(*) as count FROM exercise_attempts WHERE user_id = $1 AND exercise_id = $2',
+      [userId, exercise_id]
+    );
+    const attemptNumber = parseInt(attemptsRes.rows[0].count) + 1;
+
+    // Evaluate answer
+    const { isCorrect, explanation } = evaluateAnswer(exercise, answer);
+    
+    // Points: full for first correct, half for second, quarter for third
+    let pointsEarned = 0;
+    if (isCorrect) {
+      if (attemptNumber === 1) pointsEarned = exercise.points;
+      else if (attemptNumber === 2) pointsEarned = Math.floor(exercise.points / 2);
+      else pointsEarned = Math.floor(exercise.points / 4);
+    }
+
+    // Save attempt
+    await pool.query(`
+      INSERT INTO exercise_attempts (user_id, exercise_id, answer, is_correct, points_earned, time_spent, attempt_number)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `, [userId, exercise_id, JSON.stringify(answer), isCorrect, pointsEarned, time_spent || 0, attemptNumber]);
+
+    // Update user total points
+    if (pointsEarned > 0) {
+      await pool.query(`
+        UPDATE users SET total_points = total_points + $1, updated_at = NOW() WHERE id = $2
+      `, [pointsEarned, userId]);
+
+      // Update session
+      req.session.totalPoints = (req.session.totalPoints || 0) + pointsEarned;
+    }
+
+    // Update course progress
+    const courseRes = await pool.query('SELECT course_id FROM exercises WHERE id = $1', [exercise_id]);
+    const courseId = courseRes.rows[0].course_id;
+
+    await updateCourseProgress(userId, courseId);
+
+    // Update level
+    const userRes = await pool.query('SELECT total_points FROM users WHERE id = $1', [userId]);
+    const totalPoints = userRes.rows[0].total_points;
+    const newLevel = getLevel(totalPoints);
+    await pool.query('UPDATE users SET level = $1 WHERE id = $2', [newLevel, userId]);
+    req.session.level = newLevel;
+
+    // Check and award badges
+    const newBadges = await checkAndAwardBadges(userId, totalPoints);
+
+    res.json({
+      success: true,
+      isCorrect,
+      pointsEarned,
+      totalPoints,
+      newLevel,
+      newBadges,
+      explanation: exercise.explanation,
+      attemptNumber,
+    });
+  } catch (err) {
+    console.error(err);
+    res.json({ success: false, message: err.message });
+  }
+});
+
+// Single exercise page
+router.get('/:id', async (req, res) => {
+  try {
+    const userId = req.session.userId;
+    const exerciseRes = await pool.query(`
+      SELECT e.*, c.name as course_name, c.id as course_id, m.name as module_name
+      FROM exercises e
+      JOIN courses c ON c.id = e.course_id
+      JOIN modules m ON m.id = c.module_id
+      WHERE e.id = $1
+    `, [req.params.id]);
+
+    if (!exerciseRes.rows[0]) {
+      return res.render('error', { title: 'Introuvable', message: 'Exercice introuvable.', user: res.locals.user });
+    }
+
+    const lastAttempt = await pool.query(`
+      SELECT * FROM exercise_attempts WHERE user_id = $1 AND exercise_id = $2
+      ORDER BY created_at DESC LIMIT 1
+    `, [userId, req.params.id]);
+
+    res.render('exercises/single', {
+      title: exerciseRes.rows[0].title,
+      exercise: exerciseRes.rows[0],
+      lastAttempt: lastAttempt.rows[0] || null,
+    });
+  } catch (err) {
+    console.error(err);
+    res.render('error', { title: 'Erreur', message: err.message, user: res.locals.user });
+  }
+});
+
+// Helper: evaluate exercise answer
+function evaluateAnswer(exercise, answer) {
+  const data = exercise.data;
+
+  switch (exercise.type) {
+    case 'qcm': {
+      const isCorrect = parseInt(answer.selected) === data.correct;
+      return { isCorrect, explanation: exercise.explanation };
+    }
+    case 'vrai_faux': {
+      if (!Array.isArray(answer.answers)) return { isCorrect: false };
+      const isCorrect = data.statements.every((stmt, i) => {
+        return answer.answers[i] !== undefined && (answer.answers[i] === true || answer.answers[i] === 'true') === stmt.correct;
+      });
+      return { isCorrect, explanation: exercise.explanation };
+    }
+    case 'association': {
+      if (!Array.isArray(answer.pairs)) return { isCorrect: false };
+      const isCorrect = data.pairs.every((pair, i) => {
+        return answer.pairs[i] && answer.pairs[i].left === pair.left && answer.pairs[i].right === pair.right;
+      });
+      return { isCorrect, explanation: exercise.explanation };
+    }
+    case 'ordre': {
+      if (!Array.isArray(answer.order)) return { isCorrect: false };
+      const isCorrect = data.correct_order.every((correctIdx, i) => {
+        return answer.order[i] === correctIdx;
+      });
+      return { isCorrect, explanation: exercise.explanation };
+    }
+    case 'texte_trou': {
+      if (!answer.blanks) return { isCorrect: false };
+      const isCorrect = data.blanks.every(blank => {
+        const userAnswer = answer.blanks[blank.id];
+        return userAnswer && userAnswer.toLowerCase() === blank.answer.toLowerCase();
+      });
+      return { isCorrect, explanation: exercise.explanation };
+    }
+    default:
+      return { isCorrect: false };
+  }
+}
+
+async function updateCourseProgress(userId, courseId) {
+  const result = await pool.query(`
+    SELECT 
+      COUNT(DISTINCT e.id) as total_exercises,
+      COUNT(DISTINCT CASE WHEN ea.is_correct THEN ea.exercise_id END) as completed_exercises,
+      COALESCE(SUM(CASE WHEN ea.is_correct THEN ea.points_earned ELSE 0 END), 0) as points_earned
+    FROM exercises e
+    LEFT JOIN exercise_attempts ea ON ea.exercise_id = e.id AND ea.user_id = $1
+    WHERE e.course_id = $2
+  `, [userId, courseId]);
+
+  const row = result.rows[0];
+  const total = parseInt(row.total_exercises) || 0;
+  const completed = parseInt(row.completed_exercises) || 0;
+  const percentage = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+  await pool.query(`
+    INSERT INTO course_progress (user_id, course_id, exercises_completed, exercises_total, points_earned, completion_percentage, completed_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    ON CONFLICT (user_id, course_id) DO UPDATE SET
+      exercises_completed = $3,
+      exercises_total = $4,
+      points_earned = $5,
+      completion_percentage = $6,
+      completed_at = $7,
+      updated_at = NOW()
+  `, [userId, courseId, completed, total, row.points_earned, percentage, percentage === 100 ? new Date() : null]);
+}
+
+function getLevel(points) {
+  const LEVELS = [
+    { name: 'Débutant', min: 0 },
+    { name: 'Apprenti', min: 100 },
+    { name: 'Curieux', min: 250 },
+    { name: 'Explorateur', min: 500 },
+    { name: 'Champion numérique', min: 1000 },
+  ];
+  let level = LEVELS[0].name;
+  for (const l of LEVELS) { if (points >= l.min) level = l.name; }
+  return level;
+}
+
+async function checkAndAwardBadges(userId, totalPoints) {
+  const newBadges = [];
+  const earnedBadgeIds = (await pool.query('SELECT badge_id FROM user_badges WHERE user_id = $1', [userId])).rows.map(r => r.badge_id);
+  const allBadges = (await pool.query('SELECT * FROM badges')).rows;
+  const exerciseCount = (await pool.query('SELECT COUNT(*) as cnt FROM exercise_attempts WHERE user_id = $1', [userId])).rows[0].cnt;
+
+  for (const badge of allBadges) {
+    if (earnedBadgeIds.includes(badge.id)) continue;
+    let shouldAward = false;
+
+    if (badge.condition_type === 'points' && totalPoints >= badge.condition_value) shouldAward = true;
+    if (badge.condition_type === 'exercises_completed' && exerciseCount >= badge.condition_value) shouldAward = true;
+
+    if (shouldAward) {
+      await pool.query('INSERT INTO user_badges (user_id, badge_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [userId, badge.id]);
+      await pool.query(`
+        INSERT INTO notifications (user_id, type, title, message)
+        VALUES ($1, 'badge', $2, $3)
+      `, [userId, `Nouveau badge : ${badge.name} !`, `${badge.icon} ${badge.description}`]);
+      newBadges.push(badge);
+    }
+  }
+
+  return newBadges;
+}
+
+module.exports = router;

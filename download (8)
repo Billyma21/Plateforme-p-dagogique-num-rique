@@ -1,0 +1,76 @@
+<%- include('../partials/head', {title: 'Exercices'}) %>
+<body>
+<div class="app-wrapper">
+  <%- include('../partials/sidebar-student', {activePage: 'courses', user, unreadMessages: 0}) %>
+  <div class="main-content">
+    <div class="topbar">
+      <div class="topbar-title">
+        <h1><%= course.name %></h1>
+        <p>Module : <%= course.module_name %></p>
+      </div>
+      <a href="/student/courses" class="btn btn-outline btn-sm">← Retour</a>
+    </div>
+    <div class="page-content" style="max-width:900px">
+      <!-- Progress -->
+      <div class="card" style="margin-bottom:24px;background:<%= course.module_color || 'var(--navy)' %>;color:white">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <h3 style="color:white">Progression du cours</h3>
+          <span style="font-weight:800;font-size:1.1rem"><%= progress.exercises_completed %>/<%= exercises.length %> exercices</span>
+        </div>
+        <div style="background:rgba(255,255,255,0.2);border-radius:999px;height:12px;overflow:hidden">
+          <% const pct = exercises.length > 0 ? Math.round(progress.exercises_completed/exercises.length*100) : 0 %>
+          <div style="width:<%= pct %>%;background:white;height:100%;border-radius:999px;transition:width 0.8s"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:8px;opacity:0.85;font-size:0.85rem">
+          <span><%= progress.points_earned %> points gagnés</span>
+          <span><%= pct %>% complété</span>
+        </div>
+      </div>
+
+      <!-- Exercise List -->
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <% exercises.forEach((ex, i) => { %>
+        <a href="/student/exercises/<%= ex.id %>" style="text-decoration:none">
+          <div class="exercise-card <%= ex.is_correct === true ? 'completed' : ex.is_correct === false ? 'failed' : '' %>">
+            <div style="display:flex;align-items:center;gap:16px">
+              <div style="width:44px;height:44px;border-radius:12px;background:<%= ex.is_correct === true ? '#D1FAE5' : ex.is_correct === false ? '#FEE2E2' : 'var(--bg)' %>;display:flex;align-items:center;justify-content:center;font-size:1.3rem;flex-shrink:0">
+                <% if (ex.is_correct === true) { %>✅<% } else if (ex.is_correct === false) { %>🔄<% } else { %>📝<% } %>
+              </div>
+              <div style="flex:1">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                  <h3 style="font-size:1rem;margin:0"><%= i+1 %>. <%= ex.title %></h3>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                  <span class="badge-pill badge-info" style="font-size:0.75rem"><%= ex.type.replace('_', ' ') %></span>
+                  <span class="badge-pill <%= ex.difficulty === 'facile' ? 'badge-success' : ex.difficulty === 'moyen' ? 'badge-warning' : 'badge-danger' %>" style="font-size:0.75rem"><%= ex.difficulty %></span>
+                  <span class="badge-pill badge-purple" style="font-size:0.75rem">🏆 <%= ex.points %> pts</span>
+                </div>
+              </div>
+              <div style="text-align:right">
+                <% if (ex.is_correct === true) { %>
+                <div style="font-weight:800;color:var(--teal)">+<%= ex.points_earned %>pts</div>
+                <div style="font-size:0.75rem;color:var(--muted)">Réussi ✓</div>
+                <% } else if (ex.is_correct === false) { %>
+                <div style="font-weight:800;color:var(--coral)">+<%= ex.points_earned %>pts</div>
+                <div style="font-size:0.75rem;color:var(--muted)">Réessayer</div>
+                <% } else { %>
+                <div class="btn btn-navy btn-sm">Commencer</div>
+                <% } %>
+              </div>
+            </div>
+          </div>
+        </a>
+        <% }) %>
+      </div>
+
+      <% if (progress.is_completed) { %>
+      <div class="alert alert-success" style="margin-top:24px;font-size:1.1rem">
+        🎉 Félicitations ! Vous avez complété tous les exercices de ce cours !
+      </div>
+      <% } %>
+    </div>
+  </div>
+</div>
+<%- include('../partials/scripts') %>
+</body>
+</html>

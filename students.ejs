@@ -1,0 +1,64 @@
+<%- include('../partials/head', {title: 'Suivi étudiant'}) %>
+<body>
+<div class="app-wrapper">
+  <%- include('../partials/sidebar-trainer', {activePage: 'dashboard', user, unreadMessages: 0}) %>
+  <div class="main-content">
+    <div class="topbar">
+      <div class="topbar-title">
+        <h1><%= student.first_name %> <%= student.last_name || '' %></h1>
+        <p>Suivi de progression</p>
+      </div>
+      <a href="/trainer" class="btn btn-outline btn-sm">← Retour</a>
+    </div>
+    <div class="page-content">
+      <div class="card" style="margin-bottom:24px;background:linear-gradient(135deg,var(--navy),var(--navy-light));color:white">
+        <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+          <div class="avatar avatar-lg" style="background:<%= student.avatar_color %>"><%= student.first_name.charAt(0).toUpperCase() %></div>
+          <div style="flex:1">
+            <h2 style="color:white"><%= student.first_name %> <%= student.last_name || '' %></h2>
+            <p style="opacity:0.8"><%= student.location %> • Inscrit le <%= new Date(student.created_at).toLocaleDateString('fr-BE') %></p>
+          </div>
+          <div style="text-align:center"><div style="font-size:2.5rem"><%= student.badge_icon %></div><div style="font-weight:800"><%= student.level_name %></div></div>
+          <div style="text-align:center"><div style="font-size:2rem;font-weight:900;color:var(--gold)"><%= student.total_points %></div><div>points</div></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:24px">
+        <h3 style="margin-bottom:20px">📚 Progression par cours</h3>
+        <% progress.forEach(p => { %>
+        <% const pct = p.total_points > 0 ? Math.round(p.points_earned/p.total_points*100) : 0 %>
+        <div style="margin-bottom:14px">
+          <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+            <span style="font-weight:700"><%= p.name %></span>
+            <span class="badge-pill <%= p.is_completed ? 'badge-success' : 'badge-info' %>"><%= p.is_completed ? '✅' : pct+'%' %></span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill" style="width:<%= pct %>%;background:var(--navy)"></div></div>
+        </div>
+        <% }) %>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-bottom:20px">📋 Historique des exercices</h3>
+        <div class="table-wrapper">
+          <table>
+            <thead><tr><th>Exercice</th><th>Cours</th><th>Résultat</th><th>Points</th><th>Date</th></tr></thead>
+            <tbody>
+              <% results.forEach(r => { %>
+              <tr>
+                <td style="font-weight:600"><%= r.title %></td>
+                <td style="color:var(--muted);font-size:0.85rem"><%= r.course_name %></td>
+                <td><span class="badge-pill <%= r.is_correct ? 'badge-success' : 'badge-danger' %>"><%= r.is_correct ? '✅' : '❌' %></span></td>
+                <td style="font-weight:800;color:var(--gold)"><%= r.points_earned %>/<%= r.points %></td>
+                <td style="font-size:0.85rem;color:var(--muted)"><%= new Date(r.completed_at).toLocaleDateString('fr-BE') %></td>
+              </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<%- include('../partials/scripts') %>
+</body>
+</html>

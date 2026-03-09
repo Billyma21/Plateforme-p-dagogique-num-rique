@@ -1,0 +1,77 @@
+<%- include('../partials/head', {title: 'Espace Formateur'}) %>
+<body>
+<div class="app-wrapper">
+  <%- include('../partials/sidebar-trainer', {activePage: 'dashboard', user, unreadMessages}) %>
+  <div class="main-content">
+    <div class="topbar">
+      <div class="topbar-title">
+        <h1>Bonjour, <%= user.firstName %> 👋</h1>
+        <p>Espace formateur DIGI REFERENT</p>
+      </div>
+    </div>
+    <div class="page-content">
+      <!-- Stats -->
+      <div class="grid-3" style="margin-bottom:28px">
+        <div class="stat-card">
+          <div class="stat-icon" style="background:#EBF8FF">👥</div>
+          <div class="stat-info"><h3><%= students.length %></h3><p>Étudiants inscrits</p></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background:#FFF5F5">💬</div>
+          <div class="stat-info"><h3><%= unreadMessages %></h3><p>Messages non lus</p></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background:#F0FFF4">⚡</div>
+          <div class="stat-info"><h3><%= recentActivity.length %></h3><p>Activités récentes</p></div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <!-- Students -->
+        <div class="card">
+          <div class="card-header"><h3>👥 Mes étudiants</h3></div>
+          <% if (students.length === 0) { %>
+          <p style="text-align:center;color:var(--muted);padding:20px">Aucun étudiant inscrit</p>
+          <% } else { %>
+          <div style="max-height:400px;overflow-y:auto">
+            <% students.forEach(s => { %>
+            <a href="/trainer/students/<%= s.id %>" style="text-decoration:none;color:inherit;display:block">
+              <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
+                <div class="avatar avatar-sm" style="background:<%= s.avatar_color || '#3B82F6' %>"><%= s.first_name.charAt(0).toUpperCase() %></div>
+                <div style="flex:1">
+                  <div style="font-weight:700"><%= s.first_name %> <%= s.last_name || '' %></div>
+                  <div style="font-size:0.75rem;color:var(--muted)"><%= s.location %> • <%= s.level_name || 'Débutant' %></div>
+                </div>
+                <div style="font-weight:800;color:var(--gold);font-size:0.9rem"><%= s.total_points %>pts</div>
+              </div>
+            </a>
+            <% }) %>
+          </div>
+          <% } %>
+        </div>
+
+        <!-- Recent activity -->
+        <div class="card">
+          <div class="card-header"><h3>⚡ Activité récente</h3></div>
+          <% if (recentActivity.length === 0) { %>
+          <p style="text-align:center;color:var(--muted);padding:20px">Aucune activité</p>
+          <% } else { %>
+          <% recentActivity.forEach(a => { %>
+          <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
+            <div style="width:36px;height:36px;border-radius:50%;background:#D1FAE5;display:flex;align-items:center;justify-content:center;flex-shrink:0">✅</div>
+            <div style="flex:1">
+              <div style="font-weight:700;font-size:0.9rem"><%= a.first_name %> <%= a.last_name || '' %></div>
+              <div style="color:var(--muted);font-size:0.8rem"><%= a.title %></div>
+            </div>
+            <div style="font-weight:800;color:var(--gold)">+<%= a.points_earned %>pts</div>
+          </div>
+          <% }) %>
+          <% } %>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<%- include('../partials/scripts') %>
+</body>
+</html>

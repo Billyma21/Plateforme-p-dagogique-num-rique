@@ -1,0 +1,73 @@
+const express = require('express');
+const router = express.Router();
+const pool = require('../config/database');
+const QRCode = require('qrcode');
+const { requireAuth } = require('../middleware/auth');
+
+router.use(requireAuth);
+
+// Course detail page (accessible to all authenticated users)
+router.get('/:id', async (req, res) => {
+  try {
+    const userId = req.session.userId;
+    const courseId = req.params.id;
+
+    const [courseRes, exercises, progressRes, pdfs] = await Promise.all([
+      pool.query(`
+        SELECT c.*, m.name as module_name, m.icon as module_icon, m.color as module_color, m.id as module_id
+        FROM courses c JOIN modules m ON m.id = c.module_id
+        WHERE c.id = $1
+      `, [courseId]),
+      pool.query(`
+        SELECT e.*,
+          (SELECT COUNT(*) FROM exercise_attempts ea WHERE ea.exercise_id = e.id AND ea.user_id = $1) as attempts_count,
+          (SELECT is_correct FROM exercise_attempts ea WHERE ea.exercise_id = e.id AND ea.user_id = $1 ORDER BY ea.created_at DESC LIMIT 1) as last_result
+        FROM exercises e WHERE e.course_id = $2
+        ORDER BY e.order_index
+      `, [userId, courseId]),
+      pool.query(`
+        SELECT * FROM course_progress WHERE user_id = $1 AND course_id = $2
+      `, [userId, courseId]),
+      pool.query(`
+        SELECT * FROM pdf_uploads WHERE course_id = $1 AND is_active = true
+      `, [courseId]),
+    ]);
+
+    if (!courseRes.rows[0]) return res.redirect('/student/courses');
+
+    const course = courseRes.rows[0];
+    const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+    const exerciseUrl = `${baseUrl}/exercises/course/${courseId}`;
+
+    // Generate QR code as data URL
+    const qrDataUrl = await QRCode.toDataURL(exerciseUrl, {
+      width: 300,
+      margin: 2,
+      color: { dark: '#0F1B35', light: '#FFFFFF' }
+    });
+
+    // Ensure course progress entry exists
+    if (!progressRes.rows[0] && req.session.role === 'student') {
+      await pool.query(`
+        INSERT INTO course_progress (user_id, course_id, exercises_total)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (user_id, course_id) DO NOTHING
+      `, [userId, courseId, exercises.rows.length]);
+    }
+
+    res.render('student/course-detail', {
+      title: course.name,
+      course,
+      exercises: exercises.rows,
+      progress: progressRes.rows[0] || null,
+      pdfs: pdfs.rows,
+      qrDataUrl,
+      exerciseUrl,
+    });
+  } catch (err) {
+    console.error(err);
+    res.render('error', { title: 'Erreur', message: err.message, user: res.locals.user });
+  }
+});
+
+module.exports = router;

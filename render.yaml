@@ -1,0 +1,44 @@
+<%- include('../partials/head', {title: 'QR Code'}) %>
+<body>
+<div class="app-wrapper">
+  <%- include('../partials/sidebar-student', {activePage: 'courses', user, unreadMessages: 0}) %>
+  <div class="main-content">
+    <div class="topbar">
+      <div class="topbar-title">
+        <h1>📱 QR Code du cours</h1>
+      </div>
+      <a href="/student/courses" class="btn btn-outline btn-sm">← Retour</a>
+    </div>
+    <div class="page-content" style="display:flex;justify-content:center">
+      <div class="card" style="max-width:480px;width:100%;text-align:center">
+        <div style="font-size:2.5rem;margin-bottom:12px">📱</div>
+        <h2><%= course.name %></h2>
+        <p style="color:var(--muted);margin-bottom:24px">Module : <%= course.module_name %></p>
+        
+        <div style="background:white;border:3px solid var(--navy);border-radius:16px;padding:16px;display:inline-block;margin-bottom:24px">
+          <img src="<%= qrDataUrl %>" alt="QR Code" style="width:260px;height:260px">
+        </div>
+        
+        <div class="alert alert-info">
+          📷 Scannez ce QR code avec votre smartphone pour accéder directement aux exercices
+        </div>
+        
+        <div style="background:var(--bg);border-radius:10px;padding:12px;font-size:0.85rem;color:var(--muted);word-break:break-all;margin-top:16px">
+          🔗 <%= url %>
+        </div>
+        
+        <div style="margin-top:24px;display:flex;gap:12px;justify-content:center">
+          <a href="/student/courses/<%= course.id %>/exercises" class="btn btn-navy">
+            📝 Faire les exercices
+          </a>
+          <button onclick="window.print()" class="btn btn-outline">
+            🖨️ Imprimer
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<%- include('../partials/scripts') %>
+</body>
+</html>
