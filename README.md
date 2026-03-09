@@ -1,14 +1,5 @@
-<%- include('../partials/head', {title: 'Paramètres'}) %>
 <body>
-<div class="app-wrapper">
-  <%- include('../partials/sidebar-student', {activePage: 'settings', user, unreadMessages: 0}) %>
-  <div class="main-content">
-    <div class="topbar">
       <div class="topbar-title"><h1>⚙️ Paramètres du compte</h1></div>
-    </div>
-    <div class="page-content" style="max-width:600px">
-      <% if (success) { %><div class="alert alert-success">✅ <%= success %></div><% } %>
-      <% if (error) { %><div class="alert alert-error">⚠️ <%= error %></div><% } %>
       <div class="card">
         <h3 style="margin-bottom:24px">👤 Informations personnelles</h3>
         <form method="POST" action="/student/settings">
