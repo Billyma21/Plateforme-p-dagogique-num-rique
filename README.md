@@ -32,7 +32,6 @@
             <label class="form-label">Confirmer le mot de passe</label>
             <input type="password" name="confirm_password" class="form-control" placeholder="Répétez le nouveau mot de passe">
           </div>
-          <button type="submit" class="btn btn-primary btn-block">💾 Sauvegarder les modifications</button>
         </form>
       </div>
     </div>
